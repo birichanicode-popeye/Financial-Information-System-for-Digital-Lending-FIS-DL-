@@ -3,7 +3,7 @@ package com.fisdl.auth.security;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -16,60 +16,55 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableWebSecurity
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AuthTokenFilter authTokenFilter;
     private final UserDetailsServiceImpl userDetailsService;
 
-    public SecurityConfig(
-            JwtAuthenticationFilter jwtAuthenticationFilter,
-            UserDetailsServiceImpl userDetailsService
-    ) {
-        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    public SecurityConfig(AuthTokenFilter authTokenFilter,
+                          UserDetailsServiceImpl userDetailsService) {
+        this.authTokenFilter = authTokenFilter;
         this.userDetailsService = userDetailsService;
     }
 
-    /**
-     * Password encoder bean
-     */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
-    /**
-     * AuthenticationManager bean
-     */
     @Bean
-    public AuthenticationManager authenticationManager(
-            AuthenticationConfiguration config
-    ) throws Exception {
-        return config.getAuthenticationManager();
+    public AuthenticationManager authenticationManager(HttpSecurity http) throws Exception {
+        AuthenticationManagerBuilder authManagerBuilder =
+                http.getSharedObject(AuthenticationManagerBuilder.class);
+
+        authManagerBuilder
+                .userDetailsService(userDetailsService)
+                .passwordEncoder(passwordEncoder());
+
+        return authManagerBuilder.build();
     }
 
-    /**
-     * Main security filter chain
-     */
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        System.out.println("========================================");
+        System.out.println("CONFIGURING SECURITY FILTER CHAIN");
+        System.out.println("========================================");
 
-        http.csrf(csrf -> csrf.disable()) // Disable CSRF for REST
-                .sessionManagement(session ->
-                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Stateless JWT
-                .authorizeHttpRequests(auth -> auth
-                        // Public endpoints
-                        .requestMatchers("/api/auth/login", "/api/auth/signup", "/h2-console/**").permitAll()
-                        // All other endpoints require authentication
-                        .anyRequest().authenticated()
-                )
-                .httpBasic(basic -> basic.disable())  // Disable default HTTP Basic auth
-                .formLogin(form -> form.disable())    // Disable default form login
-                .logout(logout -> logout.disable());  // Disable default logout
+        http
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> {
+                    System.out.println("Configuring public paths...");
+                    auth
+                            .requestMatchers("/api/auth/login").permitAll()
+                            .requestMatchers("/api/auth/signup").permitAll()
+                            .requestMatchers("/api/auth/hello").permitAll()
+                            .requestMatchers("/api/auth/debug/**").permitAll()  // Debug endpoints
+                            .requestMatchers("/h2-console/**").permitAll()
+                            .anyRequest().authenticated();
+                })
+                .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+                .addFilterBefore(authTokenFilter, UsernamePasswordAuthenticationFilter.class);
 
-        // Allow H2 console in browser
-        http.headers(headers -> headers.frameOptions(frame -> frame.disable()));
-
-        // Add JWT filter before UsernamePasswordAuthenticationFilter
-        http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
-
+        System.out.println("Security filter chain configured!");
         return http.build();
     }
 }
